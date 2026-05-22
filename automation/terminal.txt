@@ -1,0 +1,7 @@
+py -m pip instal (nome do que vc quer)
+
+para trocar a pasta que esta o arquivo que vai rodar:
+cd (nome da pasta)
+
+rodar o codigo:
+py (nome do arquivo.py)
