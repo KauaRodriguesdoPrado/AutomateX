@@ -63,7 +63,7 @@ class ChromeAutomation:
             
                 '''O WhatsApp Web tem uma estrutura dinâmica, então o XPath muda constantemente.'''
                 search_box_xpath = '//*[@id="pane-side"]/div/div/div/div[1]/div/div/div/div[2]'
-                search_box = self.driver.find_element(By.XPATH, search_box_xpath)
+                search_box = self.driver.find_element(By.CSS_SELECTOR, '#pane-side > div > div > div > div:nth-child(1) > div > div > div > div.x78zum5.xdl72j9.xdt5ytf.x1iyjqo2.xl56j7k.xeuugli.x1n1b19v')
                 search_box.click()
             
                 time.sleep(6) # Tempo para o WhatsApp filtrar
@@ -77,20 +77,16 @@ class ChromeAutomation:
 
             try:
                 #clica na lupa de busca dentro da conversa
-                search = self.driver.find_element(By.CSS_SELECTOR,'#main > header > div.x1c4vz4f.x2lah0s.xdl72j9.xlese2p > div > div:nth-child(4) > span > div > button > div > div' )
+                search = self.driver.find_element(By.CSS_SELECTOR,'#main > header > div.x1c4vz4f.x2lah0s.xdl72j9.xeuugli.x101abm8.x1s73dr8.xgog33f.xlese2p > div > div:nth-child(5) > span > div > button' )
                 search.click()
-                time.sleep(3)
+                
                 
                 #pesquisa a primeira mensagem do chat (XPATH dinâmico, pode mudar)
-                button = self.driver.find_element(By.XPATH,'//*[@id="_r_5p_"]')
-                button.click()
-                button.send_keys("11268806")
-                button.send_keys(Keys.ENTER)
-                time.sleep(2)
+                buttonsearch = self.driver.find_element(By.CSS_SELECTOR,'#app > div > div > div.x78zum5.xdt5ytf.x5yr21d > div > div.x9f619.x6ikm8r.x10wlt62.x17dzmu4.x1i1dayz.x2ipvbc.xjdofhw.x2ydcri.x1873f8k.x1ppzqlz.x1c4vz4f.x2lah0s.x1oy9qf3.x5hsz1j.x17dq4o0.x10e4vud.x1xz51pm.xupwc73.x1ma46kl.xx9c7w5.xssin3l.x13ug1e2.x1qwjhxz > span > div > div > div.x1280gxy.x1c4vz4f.x2lah0s.xdl72j9 > div > button')
 
-                conversa = self.driver.find_element(By.XPATH,'//*[@id="pane-side"]/div[1]/div/div/div/div/div/div[2]')
-                conversa.click()
+                time.sleep(15)
 
+                
 
             except Exception as e:
                 print(f"Não consegui abrir a busca. Erro: {e}")
