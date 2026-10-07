@@ -1,3 +1,4 @@
+
 import os
 import re
 import json
@@ -13,12 +14,13 @@ PASTA_PROJETO = Path(__file__).resolve().parent
 
 PASTA_MAE = PASTA_PROJETO.parent
 
-
+#na mesma pasta do automation, criar outra com o nome de "mensagens" e colocar o zip do whatsapp exportado
 PASTA_MENSAGENS = PASTA_MAE / "mensagens"
 
-# Webhook do n8n
-WEBHOOK_N8N = ""
-
+# Webhook
+'''Eu deveria colocar essa parte da API dentro do gitignore, porem só vou rodar localmente '''
+'''Lembrar de tirar a chave de acesso quando for dar commit '''
+WEBHOOK_N8N= ""
 
 
 
