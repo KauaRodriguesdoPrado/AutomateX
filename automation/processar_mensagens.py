@@ -1,4 +1,3 @@
-
 import os
 import re
 import json
@@ -14,13 +13,19 @@ PASTA_PROJETO = Path(__file__).resolve().parent
 
 PASTA_MAE = PASTA_PROJETO.parent
 
-#na mesma pasta do automation, criar outra com o nome de "mensagens" e colocar o zip do whatsapp exportado
+'''A pasta do whatsapp deve estar dentro da pasta de mensagens e esta deve estar dentro da pasta python ao lado da pasta automation'''
 PASTA_MENSAGENS = PASTA_MAE / "mensagens"
 
 # Webhook
 '''Eu deveria colocar essa parte da API dentro do gitignore, porem só vou rodar localmente '''
 '''Lembrar de tirar a chave de acesso quando for dar commit '''
 WEBHOOK_N8N= ""
+
+# Defina aqui o código de peça de corte estrito (ex: "10405538" ou "11466222-00"). 
+# O script só vai processar as mensagens que vierem DEPOIS deste código.
+# Deixe em branco "" se quiser processar o chat inteiro.
+CODIGO_CORTE_FILTRO = "10405538"
+
 
 
 
@@ -174,20 +179,18 @@ def extrair_zip(arquivo_zip):
 def encontrar_chat_txt(pasta):
 
     """
-    Procura o arquivo _chat.txt dentro
-    dos arquivos extraídos.
+    Procura o arquivo de texto do chat dentro dos arquivos extraídos.
     """
 
     arquivos_chat = list(
-        pasta.rglob("_chat.txt")
+        pasta.rglob("*.txt")
     )
 
     if not arquivos_chat:
 
         print()
         print(
-            "ERRO: Não encontrei o arquivo "
-            "_chat.txt."
+            "ERRO: Não encontrei o arquivo de texto do chat."
         )
 
         return None
@@ -196,7 +199,7 @@ def encontrar_chat_txt(pasta):
 
     print()
     print(
-        f"_chat.txt encontrado: "
+        f"Arquivo de chat encontrado: "
         f"{arquivo_chat}"
     )
 
@@ -213,7 +216,6 @@ def ler_chat(arquivo_chat):
     Lê o arquivo de conversa do WhatsApp.
     """
 
-    # Tenta UTF-8 primeiro
     try:
 
         with open(
@@ -246,7 +248,8 @@ def ler_chat(arquivo_chat):
 def encontrar_imagens(pasta):
 
     """
-    Encontra todas as imagens da exportação.
+    Encontra todas as imagens da exportação e ordena alfabeticamente 
+    para manter a sequência correta do chat.
     """
 
     extensoes = {
@@ -266,8 +269,9 @@ def encontrar_imagens(pasta):
             continue
 
         if arquivo.suffix.lower() in extensoes:
-
             imagens.append(arquivo)
+
+    imagens.sort(key=lambda x: x.name)
 
     print()
     print(
@@ -279,51 +283,38 @@ def encontrar_imagens(pasta):
 
 
 # ============================================================
-# EXTRAIR CÓDIGO
+# IDENTIFICAR ANEXO (NOME DA IMAGEM NO TEXTO)
+# ============================================================
+
+def extrair_nome_anexo(texto):
+    padrao = r"<anexado:\s*([^>]+)>"
+    resultado = re.search(padrao, texto, re.IGNORECASE)
+    if resultado:
+        return resultado.group(1).strip()
+    return None
+
+
+# ============================================================
+# EXTRAIR CÓDIGO BLINDADO (EXATAMENTE 8 DÍGITOS OU COM -00)
 # ============================================================
 
 def extrair_codigo(texto):
-
     """
-    Tenta encontrar o código da peça
-    na legenda da mensagem.
-
-    Exemplo:
-
-    Switch 250vac
-    16273517
-    03unidades
+    Extrai apenas códigos válidos:
+    - Exatamente 8 dígitos (ex: 11868231)
+    - Ou formato com -00 (ex: 11466222-00)
+    Ignora rigorosamente números menores, anos (2026) e códigos inválidos.
     """
+    match_com_zero = re.search(r"\b(\d{7,8}-00)\b", texto)
+    if match_com_zero:
+        return match_com_zero.group(1)
 
-    linhas = [
-        linha.strip()
-        for linha in texto.splitlines()
-        if linha.strip()
-    ]
+    matches_oito = re.findall(r"\b(\d{8})\b", texto)
+    for m in matches_oito:
+        if not m.startswith("20") and not m.startswith("00"):
+            return m
 
-    for linha in linhas:
-
-        # Procura uma linha formada principalmente
-        # por números
-        if re.fullmatch(
-            r"\d{4,}",
-            linha
-        ):
-
-            return linha
-
-    # Segunda tentativa:
-    # procura qualquer sequência numérica
-    encontrados = re.findall(
-        r"\b\d{4,}\b",
-        texto
-    )
-
-    if encontrados:
-
-        return encontrados[0]
-
-    return None
+    return ""
 
 
 # ============================================================
@@ -331,244 +322,136 @@ def extrair_codigo(texto):
 # ============================================================
 
 def extrair_quantidade(texto):
-
-    """
-    Procura algo como:
-
-    03unidades
-    3 unidades
-    10 unidades
-    """
-
     padroes = [
         r"(\d+)\s*unidades?",
         r"(\d+)\s*unid",
         r"(\d+)\s*peças?",
     ]
-
     for padrao in padroes:
-
-        resultado = re.search(
-            padrao,
-            texto,
-            re.IGNORECASE
-        )
-
+        resultado = re.search(padrao, texto, re.IGNORECASE)
         if resultado:
-
-            return int(
-                resultado.group(1)
-            )
-
+            return int(resultado.group(1))
     return None
 
 
 # ============================================================
-# IDENTIFICAR ANEXO
+# EXTRAIR NOME DA PEÇA E CÓDIGO DA MESMA LINHA
 # ============================================================
 
-def extrair_nome_anexo(texto):
+def extrair_dados_mensagem(mensagem_texto, codigo_encontrado):
+    texto_limpo = re.sub(r"^\[\d{2}/\d{2}/\d{4},\s*\d{2}:\d{2}:\d{2}\]\s*[^:]+:\s*", "", mensagem_texto)
+    texto_limpo = re.sub(r"<anexado:[^>]+>", "", texto_limpo, flags=re.IGNORECASE)
+    texto_limpo = re.sub(r"\d+\s*(unidades?|unid|peças?)", "", texto_limpo, flags=re.IGNORECASE)
 
-    """
-    Procura no _chat.txt algo como:
+    if codigo_encontrado:
+        texto_limpo = texto_limpo.replace(str(codigo_encontrado), "")
 
-    <anexado: 00000002-PHOTO-2026-08-24-08-29-59.jpg>
-
-    Retorna somente o nome do arquivo.
-    """
-
-    padrao = (
-        r"<anexado:\s*([^>]+)>"
-    )
-
-    resultado = re.search(
-        padrao,
-        texto,
-        re.IGNORECASE
-    )
-
-    if resultado:
-
-        return resultado.group(1).strip()
-
-    return None
+    nome_peca = " ".join(texto_limpo.split()).strip()
+    return nome_peca
 
 
-# ============================================================
-# SEPARAR MENSAGENS
-# ============================================================
+# SEPARAR MENSAGENS DO CHAT
 
 def separar_mensagens(texto):
-
-    """
-    Separa o _chat.txt em mensagens.
-
-    O WhatsApp normalmente usa:
-
-    [24/08/2026, 08:29:59] Nome: mensagem
-    """
-
-    padrao = re.compile(
-        r"(?=\[\d{2}/\d{2}/\d{4},\s*\d{2}:\d{2}:\d{2}\])"
-    )
-
+    padrao = re.compile(r"(?=\[\d{2}/\d{2}/\d{4},\s*\d{2}:\d{2}:\d{2}\])")
     blocos = padrao.split(texto)
-
     mensagens = []
 
     for bloco in blocos:
-
         bloco = bloco.strip()
-
-        if not bloco:
+        if not bloco or not bloco.startswith("["):
             continue
-
-        if not bloco.startswith("["):
-            continue
-
         mensagens.append(bloco)
-
-    print()
-    print(
-        f"Mensagens identificadas: "
-        f"{len(mensagens)}"
-    )
 
     return mensagens
 
 
-# ============================================================
-# PROCESSAR MENSAGENS
-# ============================================================
+# PROCESSAR MENSAGENS COM FILTRO DE CORTE E VALIDAÇÃO DE REGRAS
 
 def processar_mensagens(
     texto_chat,
-    imagens
+    imagens,
+    codigo_corte
 ):
-
-    """
-    Relaciona a mensagem do WhatsApp
-    com a imagem anexada.
-    """
-
-    mensagens = separar_mensagens(
-        texto_chat
-    )
-
-    # Cria um índice pelo nome do arquivo
-    imagens_por_nome = {}
-
-    for imagem in imagens:
-
-        imagens_por_nome[
-            imagem.name
-        ] = imagem
+    mensagens = separar_mensagens(texto_chat)
+    
+    imagens_por_nome = {img.name: img for img in imagens}
+    lista_imagens_ordenadas = sorted(imagens, key=lambda x: x.name)
+    indice_fallback = 0
 
     resultados = []
+    corte_limpo = str(codigo_corte).strip() if codigo_corte else ""
+    processando_permitido = not bool(corte_limpo)
 
     for mensagem in mensagens:
+        nome_anexo = extrair_nome_anexo(mensagem)
+        
+        # Identifica a imagem correspondente (por nome exato ou ordem sequencial)
+        imagem_atual = None
+        if nome_anexo and nome_anexo in imagens_por_nome:
+            imagem_atual = imagens_por_nome[nome_anexo]
+        else:
+            if indice_fallback < len(lista_imagens_ordenadas):
+                imagem_atual = lista_imagens_ordenadas[indice_fallback]
+                indice_fallback += 1
 
-        nome_anexo = (
-            extrair_nome_anexo(
-                mensagem
-            )
-        )
+        codigo = extrair_codigo(mensagem)
 
-        if not nome_anexo:
+        # ========================================================
+        # REGRA DE VALIDAÇÃO:
+        #  Se vier sem imagem IGNORA
+        #  Se vier sem código válido IGNORA
+        #  Se vier somente nome e foto (sem código) IGNORA
+        # ========================================================
+        if not imagem_atual or not codigo:
             continue
 
-        imagem = imagens_por_nome.get(
-            nome_anexo
-        )
+        # Filtro de corte por código: só processa mensagens DEPOIS do código de corte
+        if not processando_permitido:
+            if corte_limpo in str(codigo):
+                processando_permitido = True
+                print(f"Código de corte {corte_limpo} encontrado! Processando itens posteriores...")
+            continue # Pula tudo o que vier antes ou o próprio código de corte
 
-        if not imagem:
-
-            # Tenta encontrar ignorando
-            # diferenças de maiúsculas/minúsculas
-            for nome, caminho in (
-                imagens_por_nome.items()
-            ):
-
-                if nome.lower() == nome_anexo.lower():
-
-                    imagem = caminho
-                    break
-
-        if not imagem:
-
-            print()
-            print(
-                "Imagem não encontrada:"
-            )
-
-            print(nome_anexo)
-
-            continue
-
-        codigo = extrair_codigo(
-            mensagem
-        )
-
-        quantidade = extrair_quantidade(
-            mensagem
-        )
-
-        # Remove a parte do anexo da legenda
-        legenda = re.sub(
-            r"<anexado:\s*[^>]+>",
-            "",
-            mensagem,
-            flags=re.IGNORECASE
-        ).strip()
+        nome_peca = extrair_dados_mensagem(mensagem, codigo)
+        quantidade = extrair_quantidade(mensagem)
 
         dados = {
             "codigo": codigo,
+            "nome_peca": nome_peca if nome_peca else "",
             "quantidade": quantidade,
-            "legenda": legenda,
-            "nome_imagem": imagem.name,
-            "caminho_imagem": str(imagem)
+            "legenda": mensagem.strip(),
+            "nome_imagem": imagem_atual.name,
+            "caminho_imagem": str(imagem_atual)
         }
 
         resultados.append(
             {
-                "imagem": imagem,
+                "imagem": imagem_atual,
                 "dados": dados
             }
         )
 
         print()
         print("=" * 60)
-        print("MATERIAL ENCONTRADO")
+        print("MATERIAL ENCONTRADO E APROVADO")
         print("=" * 60)
-
-        print(
-            f"Imagem: {imagem.name}"
-        )
-
-        print(
-            f"Código: {codigo}"
-        )
-
-        print(
-            f"Quantidade: {quantidade}"
-        )
-
-        print(
-            f"Legenda:\n{legenda}"
-        )
+        print(f"Imagem: {imagem_atual.name}")
+        print(f"Nome da Peça: {nome_peca or '(Não informado)'}")
+        print(f"Código: {codigo}")
+        print(f"Quantidade: {quantidade}")
 
     print()
     print(
-        f"Materiais encontrados: "
+        f"Materiais válidos encontrados após o corte: "
         f"{len(resultados)}"
     )
 
     return resultados
 
 
-# ============================================================
+
 # TIPO MIME
-# ============================================================
 
 def obter_mime_type(imagem):
 
@@ -596,27 +479,17 @@ def obter_mime_type(imagem):
     )
 
 
-# ============================================================
-# ENVIAR PARA N8N
-# ============================================================
+
+# ENVIAR PARA ACTIVEPIECES
 
 def enviar_para_n8n(
     imagem,
     dados
 ):
 
-    """
-    Envia a imagem e os dados da mensagem
-    para o webhook do n8n.
-
-    A imagem vai como multipart/form-data.
-
-    Os dados vão como JSON.
-    """
-
     print()
     print(
-        f"Enviando para n8n: "
+        f"Enviando para Activepieces: "
         f"{imagem.name}"
     )
 
@@ -642,22 +515,23 @@ def enviar_para_n8n(
                 },
 
                 data={
-                    "dados": json.dumps(
-                        dados,
-                        ensure_ascii=False
-                    )
+                    "codigo": str(dados.get("codigo")) if dados.get("codigo") else "",
+                    "nome_peca": str(dados.get("nome_peca")) if dados.get("nome_peca") else "",
+                    "quantidade": str(dados.get("quantidade")) if dados.get("quantidade") else "",
+                    "legenda": str(dados.get("legenda")) if dados.get("legenda") else "",
+                    "nome_imagem": str(dados.get("nome_imagem")) if dados.get("nome_imagem") else ""
                 },
 
                 timeout=60
             )
 
         print(
-            f"Status n8n: "
+            f"Status Activepieces: "
             f"{resposta.status_code}"
         )
 
         print(
-            f"Resposta n8n: "
+            f"Resposta Activepieces: "
             f"{resposta.text}"
         )
 
@@ -667,23 +541,16 @@ def enviar_para_n8n(
 
         print()
         print(
-            f"Erro ao enviar para n8n: "
+            f"Erro ao enviar para Activepieces: "
             f"{e}"
         )
 
         return False
 
 
-# ============================================================
 # SALVAR JSON LOCAL
-# ============================================================
 
 def salvar_json(resultados):
-
-    """
-    Salva uma cópia dos dados processados
-    para facilitar testes.
-    """
 
     arquivo_json = (
         PASTA_MENSAGENS /
@@ -717,11 +584,6 @@ def salvar_json(resultados):
         f"{arquivo_json}"
     )
 
-
-# ============================================================
-# PROCESSADOR PRINCIPAL
-# ============================================================
-
 def processar():
 
     print()
@@ -729,35 +591,13 @@ def processar():
     print("PROCESSADOR DE MENSAGENS WHATSAPP")
     print("=" * 60)
 
-    print()
-    print(
-        f"Pasta do projeto: "
-        f"{PASTA_PROJETO}"
-    )
-
-    print(
-        f"Pasta mãe: "
-        f"{PASTA_MAE}"
-    )
-
-    print(
-        f"Pasta das mensagens: "
-        f"{PASTA_MENSAGENS}"
-    )
-
-    # --------------------------------------------------------
     # 1. Encontrar ZIP
-    # --------------------------------------------------------
-
     arquivo_zip = encontrar_zip()
 
     if arquivo_zip is None:
         return
 
-    # --------------------------------------------------------
     # 2. Extrair ZIP
-    # --------------------------------------------------------
-
     pasta_temp = extrair_zip(
         arquivo_zip
     )
@@ -765,10 +605,7 @@ def processar():
     if pasta_temp is None:
         return
 
-    # --------------------------------------------------------
-    # 3. Encontrar _chat.txt
-    # --------------------------------------------------------
-
+    # 3. Encontrar arquivo de chat
     arquivo_chat = encontrar_chat_txt(
         pasta_temp
     )
@@ -776,10 +613,7 @@ def processar():
     if arquivo_chat is None:
         return
 
-    # --------------------------------------------------------
     # 4. Ler conversa
-    # --------------------------------------------------------
-
     texto_chat = ler_chat(
         arquivo_chat
     )
@@ -790,59 +624,45 @@ def processar():
         f"{len(texto_chat)} caracteres"
     )
 
-    # --------------------------------------------------------
     # 5. Encontrar imagens
-    # --------------------------------------------------------
-
     imagens = encontrar_imagens(
         pasta_temp
     )
 
     if not imagens:
 
-        print()
         print(
             "Nenhuma imagem encontrada."
         )
 
         return
 
-    # --------------------------------------------------------
-    # 6. Relacionar mensagens e imagens
-    # --------------------------------------------------------
-
+    # 6. Relacionar mensagens e imagens com as regras aplicadas
     resultados = processar_mensagens(
         texto_chat,
-        imagens
+        imagens,
+        CODIGO_CORTE_FILTRO
     )
 
     if not resultados:
 
-        print()
         print(
-            "Nenhum material com imagem "
-            "e legenda foi encontrado."
+            "Nenhum material válido foi encontrado após o código de corte."
         )
 
         return
 
-    # --------------------------------------------------------
     # 7. Salvar JSON local
-    # --------------------------------------------------------
-
     salvar_json(
         resultados
     )
 
-    # --------------------------------------------------------
-    # 8. Enviar cada material para o n8n
-    # --------------------------------------------------------
-
+    # 8. Enviar cada material para o Activepieces
     enviados = 0
 
     print()
     print("=" * 60)
-    print("ENVIANDO PARA O N8N")
+    print("ENVIANDO PARA O ACTIVEPIECES")
     print("=" * 60)
 
     for item in resultados:
@@ -859,10 +679,7 @@ def processar():
 
             enviados += 1
 
-    # --------------------------------------------------------
     # 9. Resultado
-    # --------------------------------------------------------
-
     print()
     print("=" * 60)
     print("PROCESSAMENTO FINALIZADO")
@@ -874,7 +691,7 @@ def processar():
     )
 
     print(
-        f"Materiais enviados ao n8n: "
+        f"Materiais enviados ao Activepieces: "
         f"{enviados}"
     )
 
